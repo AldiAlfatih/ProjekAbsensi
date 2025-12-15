@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "377023898206",
+    "project_id": "ptc23-3ce23",
+    "storage_bucket": "ptc23-3ce23.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:377023898206:android:3046095aa7e7f22ffa4acf",
+        "android_client_info": {
+          "package_name": "com.example.absensi_iot"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDM9NFAk_n_q6i0mEHKw4FsWy16EC5xEXE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
