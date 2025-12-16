@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'attendance_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
@@ -10,385 +11,401 @@ class ReportPage extends StatefulWidget {
 }
 
 class _ReportPageState extends State<ReportPage> {
-  // Variable untuk Filter Tanggal
-  DateTimeRange? _selectedDateRange;
+  final User? currentUser = FirebaseAuth.instance.currentUser;
+  String _role = 'dosen';
+  bool _isLoadingRole = true; // KUNCI UTAMA: Penahan Loading agar tidak kedip
 
-  // Fungsi Pilih Rentang Tanggal
-  Future<void> _pickDateRange() async {
-    DateTimeRange? picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(2023),
-      lastDate: DateTime(2030),
-      currentDate: DateTime.now(),
-      saveText: "TERAPKAN",
-      builder: (context, child) {
-        return Theme(
-          data: ThemeData.light().copyWith(
-            primaryColor: Colors.blueAccent,
-            colorScheme: const ColorScheme.light(primary: Colors.blueAccent),
-          ),
-          child: child!,
-        );
-      },
-    );
+  @override
+  void initState() {
+    super.initState();
+    _fetchRole();
+  }
 
-    if (picked != null) {
-      setState(() {
-        _selectedDateRange = picked;
-      });
+  // Ambil Role dulu sampai selesai, baru render halaman
+  Future<void> _fetchRole() async {
+    if (currentUser != null) {
+      try {
+        var doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser!.uid)
+            .get();
+        if (doc.exists && mounted) {
+          setState(() {
+            _role = (doc.data() as Map<String, dynamic>)['role'] ?? 'dosen';
+            _isLoadingRole = false; // Loading selesai, data siap tampil
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _isLoadingRole = false);
+      }
+    } else {
+      if (mounted) setState(() => _isLoadingRole = false);
     }
   }
 
-  // Fungsi Reset Filter
-  void _clearFilter() {
-    setState(() {
-      _selectedDateRange = null;
-    });
-  }
+  // --- ALGORITMA SISTEM CERDAS (FUZZY LOGIC SEDERHANA) ---
+  // Konsep: Memetakan status kehadiran (Input) menjadi Prediksi Kelulusan (Output)
+  // --- ANALISIS KELAS (AI CLASS ANALYST) ---
+  Widget _buildClassAnalysisCard(Map<String, dynamic> summary) {
+    int hadir = summary['hadir'] ?? 0;
+    int telat = summary['telat'] ?? 0;
+    int alpa = summary['alpa'] ?? 0;
+    int total = hadir + telat + alpa;
 
-  // Simulasi Export Data
-  Future<void> _exportData() async {
-    // Tampilkan Loading
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    if (total == 0) return const SizedBox();
 
-    // Pura-pura proses berat (2 detik)
-    await Future.delayed(const Duration(seconds: 2));
+    double participationRate = (hadir + telat) / total; // Tingkat Partisipasi
+    double disciplineRate = (hadir + telat) > 0
+        ? hadir / (hadir + telat)
+        : 0; // Tingkat Kedisiplinan
 
-    if (mounted) {
-      Navigator.pop(context); // Tutup Loading
+    String title;
+    String description;
+    Color color;
+    IconData icon;
 
-      // Tampilkan Sukses
-      showModalBottomSheet(
-        context: context,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (context) => Container(
-          padding: const EdgeInsets.all(30),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.check_circle, color: Colors.green, size: 60),
-              const SizedBox(height: 15),
-              const Text(
-                "Export Berhasil!",
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                "File laporan_absensi.xlsx telah disimpan di folder Download.",
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("TUTUP"),
+    // LOGIKA PENENTUAN KUALITAS KELAS
+    if (participationRate >= 0.8 && disciplineRate >= 0.8) {
+      title = "Kelas Sangat Efektif";
+      description =
+          "Materi tersampaikan dengan baik. Mahasiswa antusias dan disiplin tinggi.";
+      color = Colors.green;
+      icon = Icons.verified;
+    } else if (participationRate >= 0.8 && disciplineRate < 0.6) {
+      title = "Disiplin Rendah";
+      description =
+          "Mahasiswa antusias hadir (ramai), namun banyak yang terlambat. Perlu evaluasi waktu mulai kelas.";
+      color = Colors.orange;
+      icon = Icons.access_alarm;
+    } else if (participationRate < 0.5) {
+      title = "Minat/Partisipasi Rendah";
+      description =
+          "Lebih dari 50% mahasiswa tidak hadir. Perlu evaluasi metode pengajaran atau jadwal.";
+      color = Colors.red;
+      icon = Icons.warning_amber_rounded;
+    } else {
+      title = "Cukup Baik";
+      description =
+          "Kelas berjalan standar. Tingkatkan interaksi agar mahasiswa lebih termotivasi.";
+      color = Colors.blue;
+      icon = Icons.thumb_up_alt_outlined;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 30),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "AI Class Analyst: $title",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                    fontSize: 16,
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 5),
+                Text(
+                  description,
+                  style: TextStyle(color: Colors.black87, fontSize: 13),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    _miniStat("Partisipasi", participationRate, Colors.blue),
+                    const SizedBox(width: 15),
+                    _miniStat("Kedisiplinan", disciplineRate, Colors.purple),
+                  ],
+                ),
+              ],
+            ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniStat(String label, double val, Color color) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-      );
-    }
+        const SizedBox(width: 5),
+        Text(
+          "$label ${(val * 100).toInt()}%",
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (currentUser == null) return const Center(child: Text("Silakan Login"));
+
+    // TAMPILKAN LOADING PENUH JIKA ROLE BELUM SIAP (Solusi Masalah Kedip)
+    if (_isLoadingRole) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    // QUERY BUILDER
+    Query query = FirebaseFirestore.instance
+        .collection('attendance_history')
+        .orderBy('date', descending: true);
+
+    // Filter Query (Dosen hanya lihat punyanya, Admin lihat semua)
+    if (_role != 'admin') {
+      query = query.where('lecturer_email', isEqualTo: currentUser?.email);
+    }
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
-      appBar: AppBar(
-        title: const Text(
-          "Laporan Absensi",
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          // Tombol Filter Tanggal
-          IconButton(
-            onPressed: _pickDateRange,
-            icon: Icon(
-              Icons.date_range_outlined,
-              color: _selectedDateRange != null
-                  ? Colors.blueAccent
-                  : Colors.grey,
-            ),
-            tooltip: "Filter Tanggal",
-          ),
-          // Tombol Export
-          IconButton(
-            onPressed: _exportData,
-            icon: const Icon(Icons.file_download_outlined, color: Colors.green),
-            tooltip: "Export Excel",
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Indikator Filter Aktif
-          if (_selectedDateRange != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.blue[50],
-              child: Row(
+      appBar: AppBar(title: const Text("Riwayat & Prediksi Cerdas")),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: query.snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: SelectableText(
+                  "Terjadi Kesalahan (Missing Index):\n${snapshot.error}",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              ),
+            );
+          }
+
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Expanded(
-                    child: Text(
-                      "Filter: ${_formatDate(_selectedDateRange!.start)} - ${_formatDate(_selectedDateRange!.end)}",
-                      style: const TextStyle(
-                        color: Colors.blueAccent,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _clearFilter,
-                    icon: const Icon(
-                      Icons.close,
-                      size: 18,
-                      color: Colors.blueAccent,
-                    ),
-                    tooltip: "Hapus Filter",
+                  Icon(Icons.history_edu, size: 60, color: Colors.grey[300]),
+                  const SizedBox(height: 10),
+                  Text(
+                    _role == 'admin'
+                        ? "Belum ada data absensi masuk."
+                        : "Anda belum memiliki riwayat mengajar.",
+                    style: TextStyle(color: Colors.grey[500]),
                   ),
                 ],
               ),
-            ),
+            );
+          }
 
-          // List Data
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('sessions')
-                  .orderBy('created_at', descending: true)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: snapshot.data!.docs.length,
+            itemBuilder: (context, index) {
+              var data =
+                  snapshot.data!.docs[index].data() as Map<String, dynamic>;
+              Timestamp? t = data['date'];
+              String dateStr = t != null
+                  ? DateFormat(
+                      'EEEE, d MMMM yyyy • HH:mm',
+                      'id_ID',
+                    ).format(t.toDate())
+                  : "-";
+              var summary =
+                  data['summary'] ?? {'hadir': 0, 'telat': 0, 'alpa': 0};
 
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text("Belum ada data."));
-                }
-
-                var docs = snapshot.data!.docs;
-
-                // LOGIKA FILTER LOKAL
-                if (_selectedDateRange != null) {
-                  docs = docs.where((doc) {
-                    var data = doc.data() as Map<String, dynamic>;
-                    Timestamp? ts = data['created_at'];
-                    if (ts == null) return false;
-                    DateTime date = ts.toDate();
-                    return date.isAfter(
-                          _selectedDateRange!.start.subtract(
-                            const Duration(days: 1),
-                          ),
-                        ) &&
-                        date.isBefore(
-                          _selectedDateRange!.end.add(const Duration(days: 1)),
-                        );
-                  }).toList();
-                }
-
-                if (docs.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.filter_list_off,
-                          size: 60,
-                          color: Colors.grey[300],
+              return Card(
+                elevation: 3,
+                margin: const EdgeInsets.only(bottom: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                    child: const Icon(
+                      Icons.psychology,
+                      color: Colors.blueAccent,
+                    ), // Ikon Otak/AI
+                  ),
+                  title: Text(
+                    data['subject_name'] ?? "-",
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text("$dateStr\nRuang ${data['room']}"),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: const BorderRadius.only(
+                          bottomLeft: Radius.circular(15),
+                          bottomRight: Radius.circular(15),
                         ),
-                        const SizedBox(height: 10),
-                        const Text("Tidak ada data di tanggal ini"),
-                      ],
-                    ),
-                  );
-                }
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 1. HEADER RINGKASAN
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _statBadge(
+                                "HADIR",
+                                summary['hadir'],
+                                Colors.green,
+                              ),
+                              _statBadge(
+                                "TELAT",
+                                summary['telat'],
+                                Colors.orange,
+                              ),
+                              _statBadge("ALPA", summary['alpa'], Colors.red),
+                            ],
+                          ),
+                          const Divider(height: 30),
 
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    var data = docs[index].data() as Map<String, dynamic>;
-                    return _buildReportCard(context, data, docs[index].id);
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+                          // 2. PENJELASAN FITUR CERDAS (Untuk Show off ke Dosen)
+                          // 2. AI CLASS ANALYST (Evaluasi Dosen)
+                          _buildClassAnalysisCard(summary),
+                          const SizedBox(height: 15),
+
+                          // 3. DETAIL MAHASISWA & PREDIKSI
+                          const Text(
+                            "Detail Analisis Mahasiswa:",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          ...(data['details'] as List<dynamic>).map((m) {
+                            String status = m['status'] ?? 'ALPA';
+                            String lateDuration = m['late_duration'] ?? '';
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Baris Atas: Nama & Status
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        m['name'],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Text(
+                                        status,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          color: status == 'ALPA'
+                                              ? Colors.red
+                                              : (status == 'TERLAMBAT'
+                                                    ? Colors.orange
+                                                    : Colors.green),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+
+                                  // Baris Bawah: Detail Durasi
+                                  if (status == 'TERLAMBAT')
+                                    Text(
+                                      "Terlambat $lateDuration",
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.orange,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    )
+                                  else if (status == 'ALPA')
+                                    const Text(
+                                      "Tidak scan QR Code",
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.red,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    )
+                                  else
+                                    const Text(
+                                      "Hadir Tepat Waktu",
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.green,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }
 
-  // Helper Format Tanggal Pendek
-  String _formatDate(DateTime dt) {
-    return "${dt.day}/${dt.month}/${dt.year}";
-  }
-
-  Widget _buildReportCard(
-    BuildContext context,
-    Map<String, dynamic> data,
-    String docId,
-  ) {
-    String subject = data['subject_name'] ?? "Tanpa Nama";
-    String room = data['room'] ?? "-";
-    int count = data['total_present'] ?? 0;
-    String status = data['status'] ?? "CLOSED";
-
-    // LOGIKA SUMBER DATA (APP vs IOT)
-    // Jika data lama tidak punya field ini, anggap default-nya 'IOT'
-    String source = data['created_via'] ?? "IOT";
-    bool isManual = source == "APP";
-
-    Timestamp? ts = data['created_at'];
-    String dateStr = "-";
-    String timeStr = "--:--";
-
-    if (ts != null) {
-      DateTime dt = ts.toDate();
-      List<String> months = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "Mei",
-        "Jun",
-        "Jul",
-        "Ags",
-        "Sep",
-        "Okt",
-        "Nov",
-        "Des",
-      ];
-      dateStr = "${dt.day} ${months[dt.month - 1]} ${dt.year}";
-      timeStr =
-          "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
-    }
-
-    bool isOpen = status == 'OPEN';
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                AttendancePage(sessionId: docId, subjectName: subject),
+  Widget _statBadge(String label, int val, Color color) {
+    return Column(
+      children: [
+        Text(
+          val.toString(),
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: color,
           ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 15),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.05),
-              spreadRadius: 2,
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
-        child: Row(
-          children: [
-            // KOTAK TANGGAL
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    dateStr.split(' ')[0],
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blueAccent,
-                    ),
-                  ),
-                  Text(
-                    dateStr.split(' ')[1],
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 15),
-
-            // INFO UTAMA
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          subject,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      // IKON SUMBER (HP atau IOT)
-                      Tooltip(
-                        message: isManual
-                            ? "Dibuka Manual (App)"
-                            : "Dibuka Otomatis (IoT)",
-                        child: Icon(
-                          isManual
-                              ? Icons.phone_android_rounded
-                              : Icons.router_rounded,
-                          size: 16,
-                          color: isManual ? Colors.orange : Colors.blue,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    "$timeStr WIB • Ruang $room",
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            ),
-
-            // JUMLAH HADIR
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: isOpen ? Colors.green[50] : Colors.grey[100],
-                shape: BoxShape.circle,
-              ),
-              child: Text(
-                "$count",
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: isOpen ? Colors.green : Colors.grey,
-                ),
-              ),
-            ),
-          ],
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            color: Colors.grey,
+            fontWeight: FontWeight.bold,
+          ),
         ),
-      ),
+      ],
     );
   }
 }

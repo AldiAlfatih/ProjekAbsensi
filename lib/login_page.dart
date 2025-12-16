@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'home_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -10,169 +11,153 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _isLoading = false; // Untuk efek loading di tombol
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
 
-  // Fungsi Login (Logika tetap sama, cuma nambah loading state)
+  // --- FUNGSI 1: LOGIN (HANYA UNTUK MASUK) ---
   Future<void> _login() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Email dan Password harus diisi!")));
+      return;
+    }
+
     setState(() => _isLoading = true);
+    
     try {
+      // Coba Login ke Firebase
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
+      // Jika berhasil, masuk ke Home
       if (mounted) {
-        // Pindah ke Home Page
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomePage()),
-        );
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomePage()));
       }
+
     } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        String message = "Login Gagal";
-        if (e.code == 'user-not-found') {
-          message = "Email tidak ditemukan.";
-        } else if (e.code == 'wrong-password') {
-          message = "Password salah.";
-        } else if (e.code == 'invalid-email') {
-           message = "Format email salah.";
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message), backgroundColor: Colors.red),
-        );
-      }
+      String message = "Login Gagal.";
+      if (e.code == 'user-not-found') message = "Email tidak terdaftar.";
+      if (e.code == 'wrong-password') message = "Password salah.";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.red));
     } finally {
-      if(mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // --- FUNGSI 2: SEEDER (GENERATE AKUN OTOMATIS) ---
+  // Password default semua akun: 123456
+  Future<void> _runSeeder() async {
+    setState(() => _isLoading = true);
+    
+    List<Map<String, String>> seeds = [
+      {'email': 'garizah@gmail.com', 'name': 'Garizah', 'role': 'admin'},
+      {'email': 'bimo@gmail.com', 'name': 'Bimo', 'role': 'dosen'},
+      {'email': 'widya@gmail.com', 'name': 'Widya', 'role': 'dosen'},
+    ];
+
+    int successCount = 0;
+
+    for (var user in seeds) {
+      try {
+        // 1. Buat User di Auth (Password Default: 123456)
+        UserCredential cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: user['email']!,
+          password: "123456", 
+        );
+
+        // 2. Simpan Data & Role ke Firestore
+        if (cred.user != null) {
+          await cred.user!.updateDisplayName(user['name']);
+          await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
+            'email': user['email'],
+            'name': user['name'],
+            'role': user['role'],
+            'created_at': FieldValue.serverTimestamp(),
+          });
+          
+          // 3. Logout langsung (karena createUser otomatis login)
+          await FirebaseAuth.instance.signOut();
+          successCount++;
+        }
+      } catch (e) {
+        print("Gagal buat ${user['email']}: $e");
+        // Kemungkinan error: 'email-already-in-use' (Artinya sudah pernah dibuat)
+      }
+    }
+
+    setState(() => _isLoading = false);
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text("Selesai! $successCount akun baru berhasil dibuat."),
+        backgroundColor: Colors.green,
+      ));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Background bersih
-      body: Center(
-        child: SingleChildScrollView( // Agar tidak error saat keyboard muncul
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // 1. LOGO KAMPUS
-              Image.asset(
-                'assets/images/logo_kampus.png',
-                height: 120, // Sesuaikan tinggi logo
-              ),
-              const SizedBox(height: 20),
-
-              // 2. JUDUL APLIKASI
-              Column(
-                children: const [
-                  Text(
-                    "Selamat Datang di",
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                  SizedBox(height: 5),
-                  Text(
-                    "Campus Smart Attendance",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 40),
-
-              // 3. INPUT EMAIL (Desain Modern)
-              _buildModernInput(
-                controller: _emailController,
-                label: "Email Akademik",
-                icon: Icons.email_outlined,
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 15),
-
-              // 4. INPUT PASSWORD (Desain Modern)
-              _buildModernInput(
-                controller: _passwordController,
-                label: "Password",
-                icon: Icons.lock_outline,
-                obscureText: true,
-              ),
-
-              // 5. LUPA PASSWORD (Pemanis)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: () {
-                     ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Hubungi Administrator untuk reset password.")),
-                      );
-                  },
-                  child: const Text("Lupa Password?", style: TextStyle(color: Colors.blueAccent)),
+      backgroundColor: Colors.white,
+      // Tambahkan tombol rahasia di AppBar untuk Generate Akun
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          TextButton.icon(
+            onPressed: _isLoading ? null : _runSeeder,
+            icon: const Icon(Icons.cloud_upload, size: 16, color: Colors.grey),
+            label: const Text("Generate Akun (Dev)", style: TextStyle(color: Colors.grey, fontSize: 10)),
+          )
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Logo Kampus
+                Image.asset(
+                  'assets/images/logo_kampus.png', 
+                  height: 100, 
+                  errorBuilder: (c,e,s) => const Icon(Icons.school, size: 100, color: Colors.blue)
                 ),
-              ),
-              const SizedBox(height: 20),
-
-              // 6. TOMBOL LOGIN BESAR
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _login,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueAccent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    elevation: 5,
-                    shadowColor: Colors.blueAccent.withOpacity(0.3),
-                  ),
-                  child: _isLoading 
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text(
-                        "MASUK SEKARANG",
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
+                const SizedBox(height: 20),
+                const Text("Login ITH Smart Attendance", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                const Text("Silakan masuk menggunakan akun institusi.", style: TextStyle(color: Colors.grey)),
+                const SizedBox(height: 30),
+                
+                TextField(
+                  controller: _emailController, 
+                  decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email))
                 ),
-              ),
-              const SizedBox(height: 30),
-               // Footer Versi
-               Text("Versi 1.0.0 - IoT Project", style: TextStyle(color: Colors.grey[400])),
-            ],
+                const SizedBox(height: 15),
+                TextField(
+                  controller: _passwordController, 
+                  obscureText: true, 
+                  decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock))
+                ),
+                const SizedBox(height: 20),
+                
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _login,
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                    child: _isLoading 
+                      ? const CircularProgressIndicator(color: Colors.white) 
+                      : const Text("MASUK", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  // Widget Helper untuk Input Field Modern
-  Widget _buildModernInput({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    bool obscureText = false,
-    TextInputType keyboardType = TextInputType.text,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.grey[100], // Background agak abu terang
-        borderRadius: BorderRadius.circular(15),
-      ),
-      child: TextField(
-        controller: controller,
-        obscureText: obscureText,
-        keyboardType: keyboardType,
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon, color: Colors.blueAccent),
-          border: InputBorder.none, // Hilangkan border default
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
         ),
       ),
     );

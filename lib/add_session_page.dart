@@ -142,7 +142,7 @@ class _AddSessionPageState extends State<AddSessionPage> {
                           icon: Icon(Icons.book, color: Colors.blueAccent),
                         ),
                         hint: const Text("Pilih Mata Kuliah"),
-                        value: _selectedSubject,
+                        initialValue: _selectedSubject,
                         items: subjectItems,
                         onChanged: (val) => setState(() => _selectedSubject = val),
                         validator: (value) => value == null ? 'Wajib dipilih' : null,
