@@ -7,7 +7,6 @@ import 'package:intl/intl.dart';
 import 'iot_control_page.dart';
 import 'live_monitoring_page.dart';
 import 'report_page.dart';
-// Import halaman lain
 import 'schedule_page.dart';
 import 'settings_page.dart';
 
@@ -22,8 +21,6 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   final User? currentUser = FirebaseAuth.instance.currentUser;
   final DatabaseReference _rtdbRef = FirebaseDatabase.instance.ref();
-
-  // Default role dosen agar aman, nanti diupdate di initState
   String _userRole = 'dosen';
 
   @override
@@ -32,7 +29,6 @@ class _HomePageState extends State<HomePage> {
     _getUserRole();
   }
 
-  // --- AMBIL ROLE USER (ADMIN/DOSEN) ---
   Future<void> _getUserRole() async {
     if (currentUser != null) {
       try {
@@ -52,36 +48,36 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _getTodayName() {
-    // Menggunakan locale Indonesia
     return DateFormat('EEEE', 'id_ID').format(DateTime.now());
   }
 
-  // --- FUNGSI 1: BUKA ABSENSI (DOSEN) ---
+  // --- FUNGSI 1: BUKA ABSENSI (KUNCI UTAMA) ---
+  // Saat tombol ini ditekan, barulah 'attendance_status' jadi 1
+  // Dan waktu sekarang dicatat sebagai 'attendance_started_at'
   Future<void> _activateAttendance(String roomId) async {
     try {
       await _rtdbRef.child('devices/ruang_$roomId').update({
-        'attendance_status': 1, // Status Absen Aktif
+        'attendance_status': 1, // <--- INI TRIGGER AGAR ALAT BOLEH TERIMA SCAN
         'attendance_started_at': DateFormat(
           "yyyy-MM-dd HH:mm:ss",
-        ).format(DateTime.now()),
+        ).format(DateTime.now()), // <--- WAKTU MULAI REAL
       });
-      if (mounted) {
+      if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Absensi Dibuka! Mahasiswa silakan scan. 🔓"),
+            content: Text("Absensi DIBUKA! Mahasiswa sekarang bisa scan. 🔓"),
           ),
         );
-      }
     } catch (e) {
-      if (mounted) {
+      if (mounted)
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text("Error: $e")));
-      }
     }
   }
 
-  // --- FUNGSI 2: TUTUP & REKAP (DOSEN) ---
+  // --- FUNGSI 2: TUTUP & REKAP (PERBAIKAN LOGIKA TERLAMBAT) ---
+  // Parameter 'realStartTimeStr' diambil dari RTDB (Waktu tombol ditekan), BUKAN jadwal.
   Future<void> _recapAttendance(
     String roomId,
     String scheduleId,
@@ -94,7 +90,7 @@ class _HomePageState extends State<HomePage> {
           builder: (c) => AlertDialog(
             title: const Text("Tutup Absensi?"),
             content: const Text(
-              "Sistem akan menghitung kehadiran dan menyimpan ke riwayat.",
+              "Sistem akan menghitung keterlambatan berdasarkan waktu Anda menekan tombol 'Buka' tadi.",
             ),
             actions: [
               TextButton(
@@ -112,24 +108,21 @@ class _HomePageState extends State<HomePage> {
 
     if (!confirm) return;
 
-    // Loading Indicator
-    if (mounted) {
+    if (mounted)
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (c) => const Center(child: CircularProgressIndicator()),
       );
-    }
 
     try {
-      // 1. Ambil Log dari RTDB
+      // 1. Ambil Log
       DataSnapshot snapshot = await _rtdbRef
           .child('devices/ruang_$roomId/logs')
           .get();
       Map<dynamic, dynamic> logs = {};
 
       if (snapshot.value != null) {
-        // Fix Bug: Handle List vs Map dari Firebase
         if (snapshot.value is List) {
           logs = Map<dynamic, dynamic>.from((snapshot.value as List).asMap());
         } else {
@@ -140,22 +133,27 @@ class _HomePageState extends State<HomePage> {
         logs.removeWhere((key, value) => value == null);
       }
 
-      // 2. Siapkan Data
       List<dynamic> enrolledRaw = scheduleData['enrolled_students'] ?? [];
       List<Map<String, dynamic>> finalAttendance = [];
 
-      // Tentukan Waktu Mulai (Pakai Waktu Dosen Buka Absen jika ada)
-      DateTime classStartTime;
+      // 2. TENTUKAN WAKTU ACUAN (LOGIKA BARU)
+      DateTime referenceTime;
+
       if (realStartTimeStr != null) {
-        classStartTime = DateFormat(
+        // OPSI A: Pakai waktu saat Dosen tekan tombol (YANG BENAR)
+        referenceTime = DateFormat(
           "yyyy-MM-dd HH:mm:ss",
         ).parse(realStartTimeStr);
+        print(
+          "DEBUG: Menghitung terlambat berdasarkan Waktu Buka Absen: $realStartTimeStr",
+        );
       } else {
+        // OPSI B: Fallback ke Jadwal (Hanya jika error)
         DateTime now = DateTime.now();
         DateTime schedTime = DateFormat(
           "HH:mm",
         ).parse(scheduleData['start_time']);
-        classStartTime = DateTime(
+        referenceTime = DateTime(
           now.year,
           now.month,
           now.day,
@@ -168,20 +166,19 @@ class _HomePageState extends State<HomePage> {
       int countTelat = 0;
       int countAlpa = 0;
 
-      // 3. Loop Mahasiswa
       for (var student in enrolledRaw) {
         String nim = (student is String) ? student : student['nim'];
         String namaMhs = (student is String) ? student : student['name'];
 
-        // Cari di Log
         var foundLogEntry = logs.values.firstWhere((log) {
           if (log == null) return false;
           String logName = (log['name'] ?? "").toString().toLowerCase();
+          // Pencocokan Nama
           bool nameMatch =
               logName.contains(namaMhs.toLowerCase()) ||
               namaMhs.toLowerCase().contains(logName);
 
-          // Cek Tanggal Hari Ini
+          // Pencocokan Tanggal (Harus Hari Ini)
           bool dateMatch = false;
           if (log['timestamp'] != null) {
             try {
@@ -211,8 +208,10 @@ class _HomePageState extends State<HomePage> {
             ).parse(timeString);
             scanTime = DateFormat("HH:mm").format(timeScan);
 
-            // Toleransi 15 Menit dari Absen Dibuka
-            int diffMinutes = timeScan.difference(classStartTime).inMinutes;
+            // 3. HITUNG SELISIH WAKTU (SCAN - WAKTU BUKA ABSEN)
+            int diffMinutes = timeScan.difference(referenceTime).inMinutes;
+
+            // Toleransi 15 Menit dari Tombol Ditekan
             if (diffMinutes > 15) {
               status = "TERLAMBAT";
               lateDuration = "$diffMinutes Menit";
@@ -222,7 +221,7 @@ class _HomePageState extends State<HomePage> {
               countHadir++;
             }
           } catch (e) {
-            status = "HADIR";
+            status = "HADIR"; // Fallback jika parsing error
             countHadir++;
           }
         } else {
@@ -239,31 +238,30 @@ class _HomePageState extends State<HomePage> {
         });
       }
 
-      // 4. Simpan ke Firestore Riwayat
       await FirebaseFirestore.instance.collection('attendance_history').add({
         'schedule_id': scheduleId,
         'subject_name': scheduleData['subject_name'],
         'room': roomId,
         'date': Timestamp.now(),
-        'lecturer_email': currentUser?.email, // Email dosen pemilik kelas
+        'lecturer_email': currentUser?.email,
         'summary': {
           'hadir': countHadir,
           'telat': countTelat,
           'alpa': countAlpa,
         },
         'details': finalAttendance,
-        'actual_start_time': realStartTimeStr,
+        'actual_start_time': realStartTimeStr, // Simpan info kapan dosen mulai
       });
 
-      // 5. Reset Alat IoT (Bersihkan Log & Status Absen)
+      // 4. RESET TOTAL (Tutup Pintu & Matikan Absen)
       await _rtdbRef.child('devices/ruang_$roomId').update({
-        'attendance_status': 0,
+        'attendance_status': 0, // Matikan fitur scan
         'attendance_started_at': null,
         'logs': null,
       });
 
       if (mounted) {
-        Navigator.pop(context); // Tutup Loading
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Absensi Ditutup & Direkap ✅")),
         );
@@ -278,11 +276,8 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // --- KOMPONEN DASHBOARD ---
   Widget _buildDashboardContent() {
     String today = _getTodayName();
-
-    // Tentukan Query: Admin lihat semua, Dosen lihat punya sendiri
     Query query = FirebaseFirestore.instance
         .collection('schedules')
         .where('day', isEqualTo: today);
@@ -291,21 +286,11 @@ class _HomePageState extends State<HomePage> {
       query = query.where('lecturer_email', isEqualTo: currentUser?.email);
     }
 
-    // Tambahkan Order By Time
-    // Catatan: Jika error "Index Required", hapus .orderBy sementara atau buat index di Firebase Console
-    // query = query.orderBy('start_time');
-
     return StreamBuilder<QuerySnapshot>(
       stream: query.snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (snapshot.connectionState == ConnectionState.waiting)
           return const Center(child: CircularProgressIndicator());
-        }
-
-        if (snapshot.hasError) {
-          return Center(child: Text("Error memuat jadwal: ${snapshot.error}"));
-        }
-
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Container(
             padding: const EdgeInsets.all(30),
@@ -329,7 +314,6 @@ class _HomePageState extends State<HomePage> {
             ),
           );
         }
-
         return ListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -349,7 +333,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // --- KARTU MONITORING KELAS ---
   Widget _buildLiveClassCard(
     String roomId,
     String scheduleId,
@@ -359,6 +342,7 @@ class _HomePageState extends State<HomePage> {
     return StreamBuilder(
       stream: _rtdbRef.child('devices/ruang_$roomId').onValue,
       builder: (context, snapshot) {
+        // Default Values
         int doorStatus = 0;
         int attendanceStatus = 0;
         String? attendanceStartedAt;
@@ -366,33 +350,16 @@ class _HomePageState extends State<HomePage> {
         int studentCount = 0;
         Map<dynamic, dynamic> currentLogs = {};
 
-        // Cek Relevansi Waktu (Toleransi 5 Menit)
+        // Cek Relevansi Jadwal
         bool isScheduleRelevant = false;
         try {
           DateTime now = DateTime.now();
-          DateTime startTime = DateFormat(
-            "HH:mm",
-          ).parse(scheduleData['start_time']);
-          startTime = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            startTime.hour,
-            startTime.minute,
-          );
-          DateTime endTime = DateFormat(
-            "HH:mm",
-          ).parse(scheduleData['end_time']);
-          endTime = DateTime(
-            now.year,
-            now.month,
-            now.day,
-            endTime.hour,
-            endTime.minute,
-          );
-
-          if (now.isAfter(startTime.subtract(const Duration(minutes: 5))) &&
-              now.isBefore(endTime.add(const Duration(minutes: 5)))) {
+          DateTime startTime = DateFormat("HH:mm").parse(scheduleData['start_time']);
+          startTime = DateTime(now.year, now.month, now.day, startTime.hour, startTime.minute);
+          DateTime endTime = DateFormat("HH:mm").parse(scheduleData['end_time']);
+          endTime = DateTime(now.year, now.month, now.day, endTime.hour, endTime.minute);
+          if (now.isAfter(startTime.subtract(const Duration(minutes: 15))) &&
+              now.isBefore(endTime.add(const Duration(minutes: 15)))) {
             isScheduleRelevant = true;
           }
         } catch (e) {
@@ -407,50 +374,54 @@ class _HomePageState extends State<HomePage> {
           openedBy = data['opened_by'] ?? "-";
 
           if (data['logs'] != null) {
-            if (data['logs'] is List) {
-              currentLogs = Map<dynamic, dynamic>.from(
-                (data['logs'] as List).asMap(),
-              );
-            } else {
-              currentLogs = Map<dynamic, dynamic>.from(
-                data['logs'] as Map<dynamic, dynamic>,
-              );
-            }
+            if (data['logs'] is List)
+              currentLogs = Map<dynamic, dynamic>.from((data['logs'] as List).asMap());
+            else
+              currentLogs = Map<dynamic, dynamic>.from(data['logs'] as Map<dynamic, dynamic>);
             currentLogs.removeWhere((key, value) => value == null);
             studentCount = currentLogs.length;
           }
         }
 
-        // --- UI STATUS WARNA ---
+        // --- UI STATUS WARNA (LOGIKA BARU - PRIORITAS DIPERBAIKI) ---
         String statusText;
         Color statusColor;
         bool showActivateBtn = false;
         bool showRecapBtn = false;
 
-        if (!isScheduleRelevant) {
+        // PRIORITAS 1: Jika Absen Sedang AKTIF (Harus bisa ditutup kapanpun!)
+        if (attendanceStatus == 1) {
+          statusText = "ABSENSI SEDANG BERJALAN";
+          statusColor = Colors.green;
+          if (!isAdminView) showRecapBtn = true; // Tombol Tutup MUNCUL
+
+          // Info tambahan jika jadwal sudah lewat tapi lupa ditutup
+          if (!isScheduleRelevant) {
+             statusText = "Jadwal Lewat (Harap Segera Rekap)";
+             statusColor = Colors.redAccent;
+          }
+        } 
+        // PRIORITAS 2: Jika Jadwal Tidak Relevan (Dan Absen Mati)
+        else if (!isScheduleRelevant) {
           statusText = "Jadwal Selesai / Belum Mulai";
           statusColor = Colors.grey;
-        } else if (doorStatus == 0) {
+        } 
+        // PRIORITAS 3: Pintu Tertutup
+        else if (doorStatus == 0) {
           statusText = "Menunggu Ketua Tingkat...";
           statusColor = Colors.orange;
-        } else if (doorStatus == 1 && attendanceStatus == 0) {
-          statusText = "Pintu Terbuka. Menunggu Dosen...";
+        } 
+        // PRIORITAS 4: Pintu Terbuka & Absen Mati (SIAP DIBUKA)
+        else {
+          statusText = "Pintu Terbuka. Siap Buka Absen.";
           statusColor = Colors.blue;
-          if (!isAdminView) {
-            showActivateBtn = true; // Hanya Dosen yang bisa aktifkan
-          }
-        } else {
-          statusText = "ABSENSI AKTIF";
-          statusColor = Colors.green;
-          if (!isAdminView) {
-            showRecapBtn = true; // Hanya Dosen yang bisa rekap
-          }
+          if (!isAdminView) showActivateBtn = true; // Tombol Buka MUNCUL
         }
 
         return GestureDetector(
           onTap: () {
-            // Admin bisa pantau kapan saja, Dosen bisa pantau jika aktif/buka
-            if (showRecapBtn || isAdminView || (doorStatus == 1)) {
+            // Logika Navigasi: Bisa diklik jika ada tombol aktif atau absen jalan
+            if (showRecapBtn || isAdminView || attendanceStatus == 1 || doorStatus == 1) {
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -470,8 +441,8 @@ class _HomePageState extends State<HomePage> {
             margin: const EdgeInsets.only(bottom: 20),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(15),
-              side: statusColor == Colors.green
-                  ? const BorderSide(color: Colors.green, width: 2)
+              side: (statusColor == Colors.green || statusColor == Colors.redAccent)
+                  ? BorderSide(color: statusColor, width: 2)
                   : BorderSide.none,
             ),
             child: Padding(
@@ -544,69 +515,34 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const Divider(height: 25),
 
-                  if (doorStatus == 1) ...[
+                  // --- LOGIKA TAMPILAN ISI KARTU ---
+                  if (attendanceStatus == 1) ...[
+                    // JIKA ABSEN AKTIF (TAMPILKAN DATA SCAN + TOMBOL TUTUP)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          "Dibuka oleh:",
+                          "Mahasiswa Scan:",
                           style: TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                         Text(
-                          openedBy,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          "$studentCount Orang",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 5),
-
-                    if (attendanceStatus == 1 || isAdminView)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            "Mahasiswa Scan:",
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
-                          Text(
-                            "$studentCount Orang",
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      "Dimulai: ${attendanceStartedAt?.split(' ')[1] ?? '-'}",
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 11,
                       ),
-
+                    ),
                     const SizedBox(height: 15),
-
-                    // TOMBOL AKSI (Disembunyikan untuk Admin)
-                    if (showActivateBtn)
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () => _activateAttendance(roomId),
-                          icon: const Icon(
-                            Icons.play_circle_fill,
-                            color: Colors.white,
-                          ),
-                          label: const Text(
-                            "AKTIFKAN ABSENSI",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        ),
-                      ),
-
                     if (showRecapBtn)
                       SizedBox(
                         width: double.infinity,
@@ -637,9 +573,48 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                       ),
+                  ] else if (doorStatus == 1) ...[
+                    // JIKA PINTU BUKA & ABSEN MATI (TAMPILKAN TOMBOL BUKA)
+                    const Center(
+                      child: Text(
+                        "Silakan tekan tombol di bawah untuk memulai sesi absensi.",
+                        style: TextStyle(
+                          color: Colors.blue,
+                          fontStyle: FontStyle.italic,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    if (showActivateBtn)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _activateAttendance(roomId),
+                          icon: const Icon(
+                            Icons.play_circle_fill,
+                            color: Colors.white,
+                          ),
+                          label: const Text(
+                            "BUKA ABSENSI SEKARANG",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blueAccent,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
                   ] else ...[
+                    // JIKA PINTU TERTUTUP / JADWAL BELUM MULAI
                     const Text(
-                      "Menunggu Ketua Tingkat scan kartu di ruangan...",
+                      "Menunggu Ketua Tingkat scan kartu di pintu...",
                       style: TextStyle(
                         color: Colors.orange,
                         fontStyle: FontStyle.italic,
@@ -657,18 +632,14 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    // List Halaman untuk Navigasi Bawah
     final List<Widget> pages = [
-      const SizedBox(), // Placeholder Dashboard (karena dirender manual di bawah)
+      const SizedBox(),
       const SchedulePage(),
       const IotControlPage(),
       const ReportPage(),
       const SettingsPage(),
     ];
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
-      // App Bar hanya muncul di Dashboard
       appBar: _selectedIndex == 0
           ? AppBar(
               title: Row(
@@ -695,7 +666,6 @@ class _HomePageState extends State<HomePage> {
               backgroundColor: Colors.white,
               elevation: 0,
               actions: [
-                // Badge Role
                 Center(
                   child: Container(
                     margin: const EdgeInsets.only(right: 20),
@@ -720,9 +690,7 @@ class _HomePageState extends State<HomePage> {
               ],
             )
           : null,
-
       body: _selectedIndex == 0
-          // Konten Dashboard
           ? SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -758,9 +726,7 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             )
-          // Halaman Lain
           : pages[_selectedIndex],
-
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed,
